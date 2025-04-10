@@ -5,9 +5,8 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 
 import asyncio
-from google.genai import types # For creating message Content/Parts
+from google.genai import types 
 
-# Ensure this import is present from your setup cells
 from google.adk.models.lite_llm import LiteLlm
 
 from dotenv import load_dotenv
@@ -71,9 +70,9 @@ def get_current_time(city: str) -> dict:
     return {"status": "success", "report": report}
 
 
-# @title Define the Weather Agent
-# Use one of the model constants defined earlier
-AGENT_MODEL = "gemini-2.0-flash-exp" # Starting with a powerful Gemini model
+AGENT_MODEL = "gemini-2.0-flash-exp" 
+
+
 
 weather_agent = Agent(
     name="weather_agent_v1",
@@ -166,11 +165,129 @@ async def run_conversation():
     await call_agent_async("How about Paris?") # Expecting the tool's error message
     await call_agent_async("Tell me the weather in New York")
 
-# Execute the conversation using await in an async context (like Colab/Jupyter)
-# This code needs to be run in an async context
-# For example, in a Jupyter notebook, you can run it directly
-# For a regular Python script, use asyncio.run()
+
+
+
+MODEL_GPT_4O="gpt-4o"
+MODEL_CLAUDE_SONNET="claude-3-5-sonnet-latest"
+
+# --- Agent using GPT-4o ---
+weather_agent_gpt = None # Initialize to None
+runner_gpt = None      # Initialize runner to None
+try:
+    weather_agent_gpt = Agent(
+        name="weather_agent_gpt",
+        # Key change: Wrap the LiteLLM model identifier
+        model=LiteLlm(model=MODEL_GPT_4O),
+        description="Provides weather information (using GPT-4o).",
+        instruction="You are a helpful weather assistant powered by GPT-4o. "
+                    "Use the 'get_weather' tool for city weather requests. "
+                    "Clearly present successful reports or polite error messages based on the tool's output status.",
+        tools=[get_weather], # Re-use the same tool
+    )
+    print(f"Agent '{weather_agent_gpt.name}' created using model '{MODEL_GPT_4O}'.")
+    # Create a runner specific to this agent
+    runner_gpt = Runner(
+        agent=weather_agent_gpt,
+        app_name=APP_NAME,       # Use the same app name
+        session_service=session_service # Re-use the same session service
+        )
+    print(f"Runner created for agent '{runner_gpt.agent.name}'.")
+
+except Exception as e:
+    print(f"❌ Could not create GPT agent '{MODEL_GPT_4O}'. Check API Key and model name. Error: {e}")
+
+# --- Agent using Claude Sonnet ---
+weather_agent_claude = None # Initialize to None
+runner_claude = None      # Initialize runner to None
+
+
+
+try:
+    weather_agent_claude = Agent(
+        name="weather_agent_claude",
+        # Key change: Wrap the LiteLLM model identifier
+        model=LiteLlm(model=MODEL_CLAUDE_SONNET),
+        description="Provides weather information (using Claude Sonnet).",
+        instruction="You are a helpful weather assistant powered by Claude Sonnet. "
+                    "Use the 'get_weather' tool for city weather requests. "
+                    "Analyze the tool's dictionary output ('status', 'report'/'error_message'). "
+                    "Clearly present successful reports or polite error messages.",
+        tools=[get_weather], # Re-use the same tool
+    )
+    print(f"Agent '{weather_agent_claude.name}' created using model '{MODEL_CLAUDE_SONNET}'.")
+    # Create a runner specific to this agent
+    runner_claude = Runner(
+        agent=weather_agent_claude,
+        app_name=APP_NAME,       # Use the same app name
+        session_service=session_service # Re-use the same session service
+        )
+    print(f"Runner created for agent '{runner_claude.agent.name}'.")
+
+except Exception as e:
+    print(f"❌ Could not create Claude agent '{MODEL_CLAUDE_SONNET}'. Check API Key and model name. Error: {e}")
+    
+
+
+async def call_specific_agent_async(runner_instance: Runner, query: str):
+  """Sends a query to the agent via the specified runner and prints the final response."""
+  if not runner_instance:
+      print(f"⚠️ Cannot run query '{query}'. Runner is not available (check agent creation and API keys).")
+      return
+
+  agent_name = runner_instance.agent.name
+  print(f"\n>>> User Query to {agent_name}: {query}")
+
+  content = types.Content(role='user', parts=[types.Part(text=query)])
+  final_response_text = f"Agent {agent_name} did not produce a final response." # Default
+
+  try:
+    # Use the specific runner passed to the function
+    async for event in runner_instance.run_async(user_id=USER_ID, session_id=SESSION_ID, new_message=content):
+        # print(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}") # Debugging
+        if event.is_final_response():
+            if event.content and event.content.parts:
+               final_response_text = event.content.parts[0].text
+            elif event.actions and event.actions.escalate:
+               final_response_text = f"Agent escalated: {event.error_message or 'No specific message.'}"
+            break # Exit loop once final response is found
+  except Exception as e:
+      # Catch potential errors during the run (e.g., API errors)
+      print(f"❌ Error during run for agent {agent_name}: {e}")
+      final_response_text = f"Error occurred while running agent {agent_name}."
+
+
+  print(f"<<< {agent_name} Response: {final_response_text}")
+  
+  
+  
+# --- Example Usage ---
+async def run_multi_model_conversation():
+    print("\n--- Testing GPT Agent ---")
+    # Check if the runner was created successfully before calling
+    if runner_gpt:
+      await call_specific_agent_async(runner_gpt, "What's the weather in Tokyo?")
+    else:
+      print("Skipping GPT test as runner is not available.")
+
+    print("\n--- Testing Claude Agent ---")
+    # Check if the runner was created successfully
+    if runner_claude:
+      await call_specific_agent_async(runner_claude, "Weather in London please.")
+    else:
+       print("Skipping Claude test as runner is not available.")
+
+    print("\n--- Testing Original Gemini Agent ---")
+    # Assuming 'runner' still holds the runner for the original Gemini agent (weather_agent_v1 from Step 1)
+    # Ensure the 'runner' variable from Step 1 is accessible here.
+    # If running steps independently, you might need to recreate the original runner.
+    if 'runner' in globals() and runner:
+         await call_specific_agent_async(runner, "How about New York?")
+    else:
+         print("Original Gemini agent runner ('runner') not found. Skipping test.")
+  
+
 if __name__ == "__main__":
     print("calling the agent file")
-    asyncio.run(run_conversation())
+    asyncio.run(run_multi_model_conversation())
   
